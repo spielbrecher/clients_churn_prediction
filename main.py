@@ -18,10 +18,15 @@ warnings.filterwarnings('ignore')
 from sklearn.feature_selection import RFE
 from sklearn.linear_model import LogisticRegression
 
+from fastapi import FastAPI
+import streamlit as st
+from catboost import CatBoostRegressor
+
 #  https://www.kaggle.com/code/nehapawar/churn-prediction-using-logistic-regression/notebook
 class Main:
 
     def __init__(self):
+        st.title("Прогноз оттока клиентов")
         self.load_data()
         self.prepare_data()
         #self.plot_1()
@@ -32,21 +37,31 @@ class Main:
         self.feature_extraction()
         self.train_linear_model()
 
+
+
+
     def load_data(self):
         self.data: DataFrame = pd.read_csv('./WA_Fn-UseC_-Telco-Customer-Churn.csv')
-        print(self.data.head())
-        print(self.data['Churn'].value_counts())
+        st.subheader("Data")
+        st.write(self.data.head())
+        st.write(self.data['Churn'].value_counts())
 
     def prepare_data(self):
+        #  Преобразуем в численный формат параметр ОбщийОтток
         self.data['TotalCharges'] = pd.to_numeric(self.data['TotalCharges'], errors='coerce')
-        print(self.data.isnull().sum())
-        self.data['TotalCharges'].fillna(self.data['TotalCharges'].mean(), inplace=True)  # fill null with sum
+        #  Количество пустых, нулевых записей
+        st.write(self.data.isnull().sum())
+        #  Заполняем средними значениями оттока ячейки с пустыми значениями
+        self.data['TotalCharges'].fillna(self.data['TotalCharges'].mean(), inplace=True)
+        #  Делаем список категориальных признаков
+        #  Для этого определяем какие записи имеют тип object и получаем индексы этих записей, преобразуя все в список
         self.categorical_var = list(self.data.dtypes.loc[self.data.dtypes == 'object'].index)
-        print(len(self.categorical_var))
-        print(self.categorical_var)
+        st.write(len(self.categorical_var))
+        st.write(self.categorical_var)
+        # Идентификатор ничего не сообщает, выбрасываем
         self.categorical_var.remove('customerID')
         self.continuous_var = ['SeniorCitizen', 'tenure', 'MonthlyCharges', 'TotalCharges']
-        print(self.data.describe())
+        st.write(self.data.describe())
 
     def plot_1(self):
         fig, ax = plt.subplots(6, 3, figsize=(12, 20))
@@ -89,7 +104,7 @@ class Main:
         for var in self.categorical_var:
             if var != 'Churn':
                 test = self.data.groupby([var, 'Churn'])
-                print(test.size(), '\n\n')
+                st.write(test.size(), '\n\n')
 
 
     def chi_square(self):
@@ -105,8 +120,8 @@ class Main:
        for var in self.continuous_var:
             result = stats.f_oneway(self.data[var][self.data['Churn'] == 'Yes'],
                                     self.data[var][self.data['Churn'] == 'No'])
-            print(var)
-            print(result)
+            st.write(var)
+            st.write(result)
 
     def convert_categorical_to_numerical(self):
         # convert all the categorical to numerical
@@ -126,9 +141,9 @@ class Main:
         model = LogisticRegression()
         rfe = RFE(model)
         fit = rfe.fit(self.X, y)
-        print("Num Features: %s" % (fit.n_features_))
-        print("Selected Features: %s" % (fit.support_))
-        print("Feature Ranking: %s" % (fit.ranking_))
+        st.write("Num Features: %s" % (fit.n_features_))
+        st.write("Selected Features: %s" % (fit.support_))
+        st.write("Feature Ranking: %s" % (fit.ranking_))
         selected_features_rfe = list(fit.support_)
 
         self.final_features_rfe = []
@@ -136,7 +151,7 @@ class Main:
             if status == True:
                 self.final_features_rfe.append(var)
 
-        print(self.final_features_rfe)
+        st.write(self.final_features_rfe)
 
     def train_linear_model(self):
         #  train LogisticRegression model
@@ -153,7 +168,7 @@ class Main:
         y_pred_rfe_lr = self.lr_model.predict(X_test_rfe_lr)
 
         acc_rfe_lr = metrics.accuracy_score(y_test_rfe_lr, y_pred_rfe_lr)
-        print("Accuracy: ", acc_rfe_lr)
+        st.write("Accuracy: ", acc_rfe_lr)
 
         X_train, X_test, y_train, y_test = train_test_split(self.X, y, test_size=0.25, random_state=0)
         # instantiate the model (using the default parameters)
@@ -163,10 +178,10 @@ class Main:
         self.lr_model_single.fit(X_train, y_train)
         y_pred = self.lr_model_single.predict(X_test)
         lr_acc = metrics.accuracy_score(y_test, y_pred)
-        print("Accuracy: ", lr_acc)
+        st.write("Accuracy: ", lr_acc)
 
         cnf_matrix = metrics.confusion_matrix(y_test, y_pred)
-        print(cnf_matrix)
+        st.write(cnf_matrix)
 
         from sklearn.metrics import roc_curve, auc
         fpr_1, tpr_1, thresholds = roc_curve(y_test, y_pred_rfe_lr)
@@ -174,7 +189,14 @@ class Main:
         roc_auc_1 = auc(fpr_1, tpr_1)
         roc_auc_2 = auc(fpr_2, tpr_2)
 
-
+        # CatBoost
+        self.cat_model = CatBoostRegressor(iterations=1000,
+                                   task_type="GPU",
+                                   devices='0:1')
+        self.cat_model.fit(X_train, y_train)
+        st.write("CatBoost score:")
+        st.write(self.cat_model.get_best_score())
+        st.write(self.cat_model.score(X_test, y_test))
 
 
     def churn_pred(self):
@@ -185,3 +207,7 @@ class Main:
 if __name__ == '__main__':
     m = Main()
 
+app = FastAPI()
+@app.get("/")
+async def root():
+    return {"message": "Hello World"}
